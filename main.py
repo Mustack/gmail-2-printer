@@ -4,6 +4,7 @@ import os, sys
 import win32
 import win32print
 import win32api
+import win32con
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -15,6 +16,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import logging
+import subprocess
 
 # Set up logging
 logging.basicConfig(
@@ -81,6 +83,20 @@ def getAttachments(service, message_id):
     else:
         return None
 
+def checkSumatraPDF():
+    """Check if SumatraPDF is installed and return the path if found."""
+    possible_paths = [
+        r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
+        r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
+        os.path.join(os.environ['LOCALAPPDATA'], "SumatraPDF", "SumatraPDF.exe")
+    ]
+
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    return None
+
 def printFile(fileName):
     try:
         # Verify the file exists
@@ -94,19 +110,34 @@ def printFile(fileName):
             logging.error("No default printer found")
             return False
 
-        # Check if printer is available
-        try:
-            hPrinter = win32print.OpenPrinter(printer_name)
-            win32print.ClosePrinter(hPrinter)
-        except Exception as e:
-            logging.error(f"Printer error: {str(e)}")
+        # Check for SumatraPDF
+        sumatra_path = checkSumatraPDF()
+        if not sumatra_path:
+            logging.error("""SumatraPDF not found. Please install it first:
+1. Download SumatraPDF from https://www.sumatrapdfreader.org/download-free-pdf-viewer
+2. Install it using one of these methods:
+   - Standard installation: Run the installer and use default settings
+   - Portable installation: Extract to %LOCALAPPDATA%\SumatraPDF
+3. Restart this application after installation""")
             return False
 
-        # Try to print the file
+        logging.info(f"Using SumatraPDF at: {sumatra_path}")
+
+        # Build the command
+        cmd = [sumatra_path, "-print-to", printer_name, "-silent", fileName]
+        
         try:
-            win32api.ShellExecute(0, "print", fileName, None, ".", 0)
-            logging.info(f"Successfully sent {fileName} to printer {printer_name}")
-            return True
+            # Execute the print command
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = process.communicate()
+            
+            if process.returncode == 0:
+                logging.info(f"Successfully sent {fileName} to printer {printer_name}")
+                return True
+            else:
+                logging.error(f"Print failed with error: {stderr.decode()}")
+                return False
+
         except Exception as e:
             logging.error(f"Print error: {str(e)}")
             return False

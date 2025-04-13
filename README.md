@@ -16,6 +16,7 @@ My family's home printer was somewhat old and incapable of connecting to our hou
 - Python 3.6 or higher
 - A Gmail account
 - Windows (for printer functionality)
+- SumatraPDF (for reliable PDF printing)
 
 ## Setup Instructions
 
@@ -101,6 +102,23 @@ If you encounter any issues:
    - Click "Advanced"
    - Click "Go to [Your App Name] (unsafe)"
    - Click "Allow" to grant the requested permissions
+
+### Installing SumatraPDF
+
+This application requires SumatraPDF for reliable PDF printing. You can install it in one of two ways:
+
+1. **Standard Installation**:
+
+   - Download SumatraPDF from [https://www.sumatrapdfreader.org/download-free-pdf-viewer](https://www.sumatrapdfreader.org/download-free-pdf-viewer)
+   - Run the installer and use the default settings
+   - The application will automatically detect the installation
+
+2. **Portable Installation**:
+   - Download the portable version of SumatraPDF
+   - Extract it to `%LOCALAPPDATA%\SumatraPDF`
+   - The application will automatically detect the portable installation
+
+After installation, restart the application for it to detect SumatraPDF.
 
 ## Usage
 
