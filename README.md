@@ -1,10 +1,31 @@
 # EmailPrinter
 
-A python script that monitors given email address and checks for an email with attachments, which it prints.
+A python script that monitors a Gmail account and automatically prints any attachments from new emails.
 
-My family's home printer was somewhat old and incapable of connecting to our house's wifi network. As such, it being in the basement made printing files difficult and tedious. This simple script was made to be run on a Rasberry Pi that was connected to our printer. It logged into and repeatedly checked an email address I created to which files could be sent. Then, the files were processed and sent to the printer to be printed.
+My family's home printer was somewhat old and incapable of connecting to our house's wifi network. As such, it being in the basement made printing files difficult and tedious. This simple script was made to be run on a Rasberry Pi that was connected to our printer. It monitors a Gmail account and automatically prints any attachments from new emails.
+
+## Features
+
+- Monitors a Gmail account for new emails
+- Automatically prints any attachments found in new emails
+- Uses Gmail API for secure authentication
+- Runs continuously, checking for new emails every 10 seconds
+
+## Requirements
+
+- Python 3.6 or higher
+- A Gmail account
+- Windows (for printer functionality)
 
 ## Setup Instructions
+
+### Installation
+
+1. Clone this repository
+2. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ### OAuth2 Authentication Setup
 
@@ -80,3 +101,20 @@ If you encounter any issues:
    - Click "Advanced"
    - Click "Go to [Your App Name] (unsafe)"
    - Click "Allow" to grant the requested permissions
+
+## Usage
+
+1. Run the script:
+   ```bash
+   python main.py
+   ```
+2. The first time you run it, a browser window will open asking you to authorize the application
+3. After authorization, the script will start monitoring your Gmail account for new emails with attachments
+4. Any attachments found will be automatically printed to your default printer
+
+## Limitations
+
+- Currently only works with Gmail accounts
+- Requires a Google Cloud Project and Gmail API setup
+- Only works on Windows due to printer functionality
+- Only prints attachments, not email content

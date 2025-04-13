@@ -14,6 +14,17 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('email_printer.log'),
+        logging.StreamHandler()
+    ]
+)
 
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -71,7 +82,38 @@ def getAttachments(service, message_id):
         return None
 
 def printFile(fileName):
-    win32api.ShellExecute(0, "print", fileName, CurrentPrinter, ".", 0)
+    try:
+        # Verify the file exists
+        if not os.path.exists(fileName):
+            logging.error(f"File not found: {fileName}")
+            return False
+
+        # Get the default printer
+        printer_name = win32print.GetDefaultPrinter()
+        if not printer_name:
+            logging.error("No default printer found")
+            return False
+
+        # Check if printer is available
+        try:
+            hPrinter = win32print.OpenPrinter(printer_name)
+            win32print.ClosePrinter(hPrinter)
+        except Exception as e:
+            logging.error(f"Printer error: {str(e)}")
+            return False
+
+        # Try to print the file
+        try:
+            win32api.ShellExecute(0, "print", fileName, None, ".", 0)
+            logging.info(f"Successfully sent {fileName} to printer {printer_name}")
+            return True
+        except Exception as e:
+            logging.error(f"Print error: {str(e)}")
+            return False
+
+    except Exception as e:
+        logging.error(f"Unexpected error while printing {fileName}: {str(e)}")
+        return False
 
 detach_dir = '.'
 if 'attachments' not in os.listdir(detach_dir):
@@ -97,6 +139,11 @@ for msg_id in id_list[-4:]:
 
 # Setup printer
 CurrentPrinter = win32print.GetDefaultPrinter()
+if not CurrentPrinter:
+    logging.error("No default printer found. Please set a default printer in Windows settings.")
+    sys.exit(1)
+
+logging.info(f"Using default printer: {CurrentPrinter}")
 
 while True:
     # Check for new messages
