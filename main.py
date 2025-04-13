@@ -18,6 +18,7 @@ from email import encoders
 import logging
 import subprocess
 import tempfile
+import wmi
 
 # Set up logging
 logging.basicConfig(
@@ -100,56 +101,171 @@ def checkSumatraPDF():
     
     return None
 
-def printFile(file_data, file_name):
-    """Print a file from memory using SumatraPDF."""
+def isPrinterOnline(printer_name):
+    """Check if the printer is online by checking USB device status."""
     try:
-        # Get the default printer
-        printer_name = win32print.GetDefaultPrinter()
-        if not printer_name:
-            logging.error("No default printer found")
-            return False
+        # Get printer handle
+        h_printer = win32print.OpenPrinter(printer_name)
+        try:
+            # Get printer info
+            printer_info = win32print.GetPrinter(h_printer, 2)
+            port_name = printer_info['pPortName']
+            
+            # Check if it's a USB printer
+            if port_name.startswith('USB'):
+                # Try to get device status
+                try:
+                    # Use Windows Management Instrumentation to check device status
+                    c = wmi.WMI()
+                    
+                    # First check Win32_Printer for more detailed printer status
+                    for printer in c.Win32_Printer(DeviceID=printer_name):
+                        logging.info(f"Found printer in Win32_Printer: {printer.DeviceID}")
+                        
+                        # Map printer status codes to human-readable messages
+                        status_codes = {
+                            0: "Ready",
+                            1: "Paused",
+                            2: "Error",
+                            3: "Pending Deletion",
+                            4: "Paper Jam",
+                            5: "Paper Out",
+                            6: "Manual Feed",
+                            7: "Paper Problem",
+                            8: "Offline",
+                            9: "IO Active",
+                            10: "Busy",
+                            11: "Printing",
+                            12: "Output Bin Full",
+                            13: "Not Available",
+                            14: "Waiting",
+                            15: "Processing",
+                            16: "Initializing",
+                            17: "Warming Up",
+                            18: "Toner Low",
+                            19: "No Toner",
+                            20: "Page Punt",
+                            21: "User Intervention Required",
+                            22: "Out of Memory",
+                            23: "Door Open",
+                            24: "Server Unknown",
+                            25: "Power Save"
+                        }
+                        
+                        status_msg = status_codes.get(printer.PrinterStatus, f"Unknown status ({printer.PrinterStatus})")
+                        logging.info(f"Printer status: {status_msg}")
+                        logging.info(f"Printer state: {'Offline' if printer.WorkOffline else 'Online'}")
+                        
+                        if printer.WorkOffline:
+                            logging.warning(f"Printer {printer_name} is set to work offline")
+                            return False
+                        
+                        # Check USB device status
+                        for usb in c.Win32_USBControllerDevice():
+                            try:
+                                device = usb.Dependent
+                                if port_name in str(device.DeviceID):
+                                    logging.info(f"Found USB device for printer: {device.DeviceID}")
+                                    if device.Status == "OK":
+                                        logging.info(f"USB device is connected and powered on")
+                                        return True
+                                    else:
+                                        logging.warning(f"USB device status: {device.Status}")
+                                        return False
+                            except:
+                                continue
+                        
+                        # If we get here, we didn't find the USB device
+                        logging.warning(f"USB device for printer {printer_name} not found")
+                        return False
+                    
+                    # If we get here, we didn't find the printer in Win32_Printer
+                    logging.warning(f"Printer {printer_name} not found in Win32_Printer")
+                    return False
+                    
+                except Exception as e:
+                    logging.warning(f"Failed to check printer status: {str(e)}")
+                    return False
+            else:
+                # For non-USB printers, use the standard status check
+                status = printer_info['Status']
+                if status == 0:
+                    logging.info(f"Printer {printer_name} reports ready")
+                    return True
+                else:
+                    logging.warning(f"Printer {printer_name} reports status: {status}")
+                    return False
+                    
+        finally:
+            win32print.ClosePrinter(h_printer)
+            
+    except Exception as e:
+        logging.error(f"Error checking printer status: {str(e)}")
+        return False
 
-        # Check for SumatraPDF
-        sumatra_path = checkSumatraPDF()
-        if not sumatra_path:
-            logging.error("""SumatraPDF not found. Please install it first:
+def printFile(file_data, file_name, retry_delay=30):
+    """Print a file from memory using SumatraPDF with indefinite retry mechanism."""
+    retry_count = 0
+    while True:
+        try:
+            # Get the default printer
+            printer_name = win32print.GetDefaultPrinter()
+            if not printer_name:
+                logging.error("No default printer found")
+                return False
+
+            # Check if printer is online
+            if not isPrinterOnline(printer_name):
+                retry_count += 1
+                logging.warning(f"Printer is offline. Retry attempt {retry_count} in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                continue
+
+            # Check for SumatraPDF
+            sumatra_path = checkSumatraPDF()
+            if not sumatra_path:
+                logging.error("""SumatraPDF not found. Please install it first:
 1. Download SumatraPDF from https://www.sumatrapdfreader.org/download-free-pdf-viewer
 2. Install it using one of these methods:
    - Standard installation: Run the installer and use default settings
    - Portable installation: Extract to %LOCALAPPDATA%\SumatraPDF
 3. Restart this application after installation""")
-            return False
-
-        logging.info(f"Using SumatraPDF at: {sumatra_path}")
-
-        # Create a temporary file for printing
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as temp_file:
-            temp_file.write(file_data)
-            temp_path = temp_file.name
-
-        try:
-            # Build and execute the print command
-            cmd = [sumatra_path, "-print-to", printer_name, "-silent", temp_path]
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode == 0:
-                logging.info(f"Successfully sent {file_name} to printer {printer_name}")
-                return True
-            else:
-                logging.error(f"Print failed with error: {stderr.decode()}")
                 return False
 
-        finally:
-            # Clean up the temporary file
-            try:
-                os.unlink(temp_path)
-            except Exception as e:
-                logging.error(f"Failed to delete temporary file {temp_path}: {str(e)}")
+            logging.info(f"Using SumatraPDF at: {sumatra_path}")
 
-    except Exception as e:
-        logging.error(f"Unexpected error while printing {file_name}: {str(e)}")
-        return False
+            # Create a temporary file for printing
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as temp_file:
+                temp_file.write(file_data)
+                temp_path = temp_file.name
+
+            try:
+                # Build and execute the print command
+                cmd = [sumatra_path, "-print-to", printer_name, "-silent", temp_path]
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, stderr = process.communicate()
+                
+                if process.returncode == 0:
+                    logging.info(f"Successfully sent {file_name} to printer {printer_name}")
+                    return True
+                else:
+                    error_msg = stderr.decode()
+                    logging.error(f"Print failed with error: {error_msg}")
+                    retry_count += 1
+                    logging.warning(f"Print failed. Retry attempt {retry_count} in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+
+            finally:
+                # Clean up the temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logging.error(f"Failed to delete temporary file {temp_path}: {str(e)}")
+
+        except Exception as e:
+            logging.error(f"Unexpected error while printing {file_name}: {str(e)}")
+            return False
 
 def processMessage(service, msg_id):
     """Process a single message: get attachments, print them, and move the message to trash if successful."""
@@ -207,16 +323,9 @@ results = service.users().messages().list(
     q='-label:trash'  # Exclude messages in trash
 ).execute()
 messages = results.get('messages', [])
-id_list = [msg['id'] for msg in messages]
 processed_messages = set()  # Track all processed messages
 
-logging.info(f"Initial message count: {len(id_list)}")
-
-# Print attachments from the last 4 messages
-for msg_id in id_list[-4:]:
-    if msg_id not in processed_messages:
-        processMessage(service, msg_id)
-        processed_messages.add(msg_id)
+logging.info(f"Initial message count: {len(messages)}")
 
 # Setup printer
 CurrentPrinter = win32print.GetDefaultPrinter()
@@ -227,23 +336,30 @@ if not CurrentPrinter:
 logging.info(f"Using default printer: {CurrentPrinter}")
 
 while True:
-    # Check for new messages
-    results = service.users().messages().list(
-        userId='me', 
-        labelIds=['INBOX'],
-        q='-label:trash'  # Exclude messages in trash
-    ).execute()
-    messages = results.get('messages', [])
-    current_ids = [msg['id'] for msg in messages]
-    
-    # Find new messages that haven't been processed
-    new_ids = [msg_id for msg_id in current_ids if msg_id not in processed_messages]
-    logging.info(f"Found {len(new_ids)} new messages")
-    
-    # Process new messages
-    for msg_id in new_ids:
-        processMessage(service, msg_id)
-        processed_messages.add(msg_id)
-    
-    time.sleep(10)  # Wait 10 seconds before checking again
+    try:
+        # Check for new messages
+        results = service.users().messages().list(
+            userId='me', 
+            labelIds=['INBOX'],
+            q='-label:trash'  # Exclude messages in trash
+        ).execute()
+        messages = results.get('messages', [])
+        current_ids = [msg['id'] for msg in messages]
+        
+        # Find new messages that haven't been processed
+        new_ids = [msg_id for msg_id in current_ids if msg_id not in processed_messages]
+        
+        if new_ids:
+            logging.info(f"Found {len(new_ids)} new messages to process")
+            for msg_id in new_ids:
+                processMessage(service, msg_id)
+                processed_messages.add(msg_id)
+        else:
+            logging.debug("No new messages found")
+        
+        time.sleep(10)  # Wait 10 seconds before checking again
+        
+    except Exception as e:
+        logging.error(f"Error in main loop: {str(e)}")
+        time.sleep(30)  # Wait longer on error before retrying
 
