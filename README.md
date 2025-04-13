@@ -94,7 +94,3 @@ The script will run in the background without showing a console window.
 - If you get authentication errors:
   - Delete the `token.pickle` file
   - Run the script again to reauthorize
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
