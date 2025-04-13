@@ -17,6 +17,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import logging
 import subprocess
+import tempfile
 
 # Set up logging
 logging.basicConfig(
@@ -29,7 +30,10 @@ logging.basicConfig(
 )
 
 # If modifying these scopes, delete the file token.pickle.
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+]
 
 def get_credentials():
     """Gets valid user credentials from storage.
@@ -56,15 +60,16 @@ def get_credentials():
     return creds
 
 def Diff(li1, li2):
-    li_dif = [i for i in li1 + li2 if i not in li1 or i not in li2]
-    return li_dif
+    """Return elements in li2 that are not in li1."""
+    return [x for x in li2 if x not in li1]
 
 def getAttachments(service, message_id):
+    """Get attachments from a message and return them as in-memory file objects."""
     message = service.users().messages().get(userId='me', id=message_id, format='raw').execute()
     msg_str = base64.urlsafe_b64decode(message['raw'].encode('ASCII'))
     mime_msg = email.message_from_bytes(msg_str)
     
-    fileName = []
+    attachments = []
     for part in mime_msg.walk():
         if part.get_content_maintype() == 'multipart':
             continue
@@ -72,16 +77,14 @@ def getAttachments(service, message_id):
             continue
         fName = part.get_filename()
         if fName:
-            filePath = os.path.join(detach_dir, 'attachments', fName)
-            print(fName)
-            file = open(fName, 'wb')
-            file.write(part.get_payload(decode=True))
-            file.close()
-            fileName.append(file)
-    if bool(fileName):
-        return fileName
-    else:
-        return None
+            # Create an in-memory file object
+            file_data = part.get_payload(decode=True)
+            attachments.append({
+                'name': fName,
+                'data': file_data
+            })
+    
+    return attachments if attachments else None
 
 def checkSumatraPDF():
     """Check if SumatraPDF is installed and return the path if found."""
@@ -97,13 +100,9 @@ def checkSumatraPDF():
     
     return None
 
-def printFile(fileName):
+def printFile(file_data, file_name):
+    """Print a file from memory using SumatraPDF."""
     try:
-        # Verify the file exists
-        if not os.path.exists(fileName):
-            logging.error(f"File not found: {fileName}")
-            return False
-
         # Get the default printer
         printer_name = win32print.GetDefaultPrinter()
         if not printer_name:
@@ -123,28 +122,73 @@ def printFile(fileName):
 
         logging.info(f"Using SumatraPDF at: {sumatra_path}")
 
-        # Build the command
-        cmd = [sumatra_path, "-print-to", printer_name, "-silent", fileName]
-        
+        # Create a temporary file for printing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as temp_file:
+            temp_file.write(file_data)
+            temp_path = temp_file.name
+
         try:
-            # Execute the print command
+            # Build and execute the print command
+            cmd = [sumatra_path, "-print-to", printer_name, "-silent", temp_path]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = process.communicate()
             
             if process.returncode == 0:
-                logging.info(f"Successfully sent {fileName} to printer {printer_name}")
+                logging.info(f"Successfully sent {file_name} to printer {printer_name}")
                 return True
             else:
                 logging.error(f"Print failed with error: {stderr.decode()}")
                 return False
 
-        except Exception as e:
-            logging.error(f"Print error: {str(e)}")
-            return False
+        finally:
+            # Clean up the temporary file
+            try:
+                os.unlink(temp_path)
+            except Exception as e:
+                logging.error(f"Failed to delete temporary file {temp_path}: {str(e)}")
 
     except Exception as e:
-        logging.error(f"Unexpected error while printing {fileName}: {str(e)}")
+        logging.error(f"Unexpected error while printing {file_name}: {str(e)}")
         return False
+
+def processMessage(service, msg_id):
+    """Process a single message: get attachments, print them, and move the message to trash if successful."""
+    # First check if the message is already in trash
+    try:
+        message = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['labels']).execute()
+        labels = message.get('labelIds', [])
+        if 'TRASH' in labels:
+            logging.info(f"Message {msg_id} is already in trash, skipping")
+            return
+    except Exception as e:
+        logging.error(f"Failed to check message labels: {str(e)}")
+        return
+
+    attachments = getAttachments(service, msg_id)
+    if attachments:
+        all_successful = True
+        for attachment in attachments:
+            if not printFile(attachment['data'], attachment['name']):
+                all_successful = False
+                break
+        
+        if all_successful:
+            try:
+                # Move the message to trash
+                service.users().messages().trash(userId='me', id=msg_id).execute()
+                logging.info(f"Successfully moved message {msg_id} to trash after printing")
+                
+                # Verify the message was moved to trash
+                message = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['labels']).execute()
+                labels = message.get('labelIds', [])
+                if 'TRASH' in labels:
+                    logging.info(f"Verified message {msg_id} is in trash")
+                else:
+                    logging.error(f"Message {msg_id} was not moved to trash successfully")
+            except Exception as e:
+                logging.error(f"Failed to move message {msg_id} to trash: {str(e)}")
+        else:
+            logging.warning(f"Not deleting message {msg_id} due to failed print attempts")
 
 detach_dir = '.'
 if 'attachments' not in os.listdir(detach_dir):
@@ -157,16 +201,22 @@ creds = get_credentials()
 service = build('gmail', 'v1', credentials=creds)
 
 # Get initial list of messages
-results = service.users().messages().list(userId='me', labelIds=['INBOX']).execute()
+results = service.users().messages().list(
+    userId='me', 
+    labelIds=['INBOX'],
+    q='-label:trash'  # Exclude messages in trash
+).execute()
 messages = results.get('messages', [])
 id_list = [msg['id'] for msg in messages]
+processed_messages = set()  # Track all processed messages
+
+logging.info(f"Initial message count: {len(id_list)}")
 
 # Print attachments from the last 4 messages
 for msg_id in id_list[-4:]:
-    attachments = getAttachments(service, msg_id)
-    if attachments:
-        for attachment in attachments:
-            printFile(attachment.name)
+    if msg_id not in processed_messages:
+        processMessage(service, msg_id)
+        processed_messages.add(msg_id)
 
 # Setup printer
 CurrentPrinter = win32print.GetDefaultPrinter()
@@ -178,20 +228,22 @@ logging.info(f"Using default printer: {CurrentPrinter}")
 
 while True:
     # Check for new messages
-    results = service.users().messages().list(userId='me', labelIds=['INBOX']).execute()
+    results = service.users().messages().list(
+        userId='me', 
+        labelIds=['INBOX'],
+        q='-label:trash'  # Exclude messages in trash
+    ).execute()
     messages = results.get('messages', [])
     current_ids = [msg['id'] for msg in messages]
     
-    # Find new messages
-    new_ids = Diff(current_ids, id_list)
+    # Find new messages that haven't been processed
+    new_ids = [msg_id for msg_id in current_ids if msg_id not in processed_messages]
+    logging.info(f"Found {len(new_ids)} new messages")
     
     # Process new messages
     for msg_id in new_ids:
-        attachments = getAttachments(service, msg_id)
-        if attachments:
-            for attachment in attachments:
-                printFile(attachment.name)
-        id_list.append(msg_id)
+        processMessage(service, msg_id)
+        processed_messages.add(msg_id)
     
     time.sleep(10)  # Wait 10 seconds before checking again
 
