@@ -1,5 +1,4 @@
 import email
-import imaplib
 import time
 import os, sys
 import win32
@@ -8,8 +7,13 @@ import win32api
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 import pickle
 import base64
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -42,16 +46,13 @@ def Diff(li1, li2):
     li_dif = [i for i in li1 + li2 if i not in li1 or i not in li2]
     return li_dif
 
-def getContent(id):
-    result, data = imap.fetch(id, "(RFC822)")
-    msg = email.message_from_bytes(data[0][1])
-    return msg.get_payload(0).get_payload(decode=True)
-
-def getAttachments(id):
-    result, data = imap.fetch(id, "(RFC822)")
-    msg = email.message_from_bytes(data[0][1])
+def getAttachments(service, message_id):
+    message = service.users().messages().get(userId='me', id=message_id, format='raw').execute()
+    msg_str = base64.urlsafe_b64decode(message['raw'].encode('ASCII'))
+    mime_msg = email.message_from_bytes(msg_str)
+    
     fileName = []
-    for part in msg.walk():
+    for part in mime_msg.walk():
         if part.get_content_maintype() == 'multipart':
             continue
         if part.get('Content-Disposition') is None:
@@ -76,42 +77,43 @@ detach_dir = '.'
 if 'attachments' not in os.listdir(detach_dir):
     os.mkdir('attachments')
 
-#credentials 
-#CHANGE THESE TO YOUR CREDENTIALS
-username = "mailprintserver@gmail.com"
-password = "ypv.jfa7qup5brw9DFZ"
-
 # Get OAuth2 credentials
 creds = get_credentials()
-access_token = creds.token
 
-# Convert the access token to XOAUTH2 format
-auth_string = f'user={username}\1auth=Bearer {access_token}\1\1'
-auth_string = base64.b64encode(auth_string.encode()).decode()
+# Build the Gmail service
+service = build('gmail', 'v1', credentials=creds)
 
-# Setup connection to email using OAuth2
-imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
-imap.authenticate('XOAUTH2', lambda x: auth_string)
+# Get initial list of messages
+results = service.users().messages().list(userId='me', labelIds=['INBOX']).execute()
+messages = results.get('messages', [])
+id_list = [msg['id'] for msg in messages]
 
-#setup printer stuff
-CurrentPrinter = win32print.GetDefaultPrinter()
-
-
-imap.select("Inbox", readonly=True)
-result, ids = imap.search(None, "ALL")
-id_list = ids[0].split()
-
-attachments = getAttachments(id_list[len(id_list) - 4])
-for att in attachments:
-    printFile(att.name)
-while True:
-    imap.select("Inbox", readonly=True)
-    result, ids2 = imap.search(None, "ALL")
-    process_ids = Diff(id_list, ids2[0].split())
-    for d in process_ids:
-        attachments = getAttachments(d)
-
+# Print attachments from the last 4 messages
+for msg_id in id_list[-4:]:
+    attachments = getAttachments(service, msg_id)
+    if attachments:
         for attachment in attachments:
             printFile(attachment.name)
-        id_list.append(d)
+
+# Setup printer
+CurrentPrinter = win32print.GetDefaultPrinter()
+
+while True:
+    # Check for new messages
+    results = service.users().messages().list(userId='me', labelIds=['INBOX']).execute()
+    messages = results.get('messages', [])
+    current_ids = [msg['id'] for msg in messages]
+    
+    # Find new messages
+    new_ids = Diff(current_ids, id_list)
+    
+    # Process new messages
+    for msg_id in new_ids:
+        attachments = getAttachments(service, msg_id)
+        if attachments:
+            for attachment in attachments:
+                printFile(attachment.name)
+        id_list.append(msg_id)
+    
+    time.sleep(10)  # Wait 10 seconds before checking again
 

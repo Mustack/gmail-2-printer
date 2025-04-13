@@ -4,29 +4,79 @@ A python script that monitors given email address and checks for an email with a
 
 My family's home printer was somewhat old and incapable of connecting to our house's wifi network. As such, it being in the basement made printing files difficult and tedious. This simple script was made to be run on a Rasberry Pi that was connected to our printer. It logged into and repeatedly checked an email address I created to which files could be sent. Then, the files were processed and sent to the printer to be printed.
 
-## OAuth2 Setup Instructions
+## Setup Instructions
 
-1. Install the required dependencies:
+### OAuth2 Authentication Setup
 
-   ```
-   pip install -r requirements.txt
-   ```
+To get the `credentials.json` file for the Email Printer application:
 
-2. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-
-   - Create a new project or select an existing one
-   - [Enable the Gmail API for your project](https://console.cloud.google.com/marketplace/product/google/gmail.googleapis.com)
-   - Go to "Credentials" and create an OAuth Client ID, following instructions to configure required project settings.
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the Gmail API:
+   - Go to "APIs & Services" > "Library"
+   - Search for "Gmail API"
+   - Click "Enable"
+4. Create OAuth 2.0 credentials:
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
    - Choose "Desktop app" as the application type
-   - Download the client configuration file and save it as `credentials.json` in the same directory as the script
+   - Give it a name (e.g., "Email Printer")
+   - Click "Create"
+5. Download the credentials:
+   - Click the download icon (⬇️) next to your newly created OAuth client ID
+   - Save the downloaded file as `credentials.json` in the same directory as your script
 
-3. Run the script for the first time:
+### Adding Test Users
 
-   - A browser window will open asking you to authorize the application
-   - Sign in with your Google account
-   - Grant the requested permissions
-   - The script will save the credentials in `token.pickle` for future use
+Since this application is in testing mode, you need to add any email addresses that will be using the application to the test users list:
 
-4. The script will now use OAuth2 authentication instead of password-based authentication, which is more secure and follows Google's recommended practices.
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Navigate to "APIs & Services" > "OAuth consent screen"
+3. Click on "Edit App" (pencil icon)
+4. Under "Test users", click "ADD USERS"
+5. Add the email addresses of all users who will be testing the application
+   - For example: `mailprintserver@gmail.com`
+6. Click "SAVE"
 
-Note: The `token.pickle` file contains sensitive information and should be kept secure. Do not share it or commit it to version control.
+Note: Each test user will need to:
+
+1. Use the email address you added to the test users list
+2. Go through the OAuth consent flow when running the application for the first time
+3. Accept the permissions requested by the application
+
+The downloaded file will contain your actual client ID and client secret. The structure will look like this:
+
+```json
+{
+  "installed": {
+    "client_id": "your-actual-client-id.apps.googleusercontent.com",
+    "project_id": "your-project-id",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_secret": "your-actual-client-secret",
+    "redirect_uris": ["http://localhost"]
+  }
+}
+```
+
+### Security Notes
+
+1. DO NOT share your `credentials.json` file
+2. DO NOT commit it to version control
+3. Keep your client ID and client secret secure
+4. If you accidentally expose these credentials, you can revoke them in the Google Cloud Console and create new ones
+
+### Troubleshooting
+
+If you encounter any issues:
+
+1. Make sure you've enabled the Gmail API
+2. Verify that your OAuth consent screen is properly configured
+3. Check that you've selected the correct application type (Desktop app)
+4. Ensure the redirect URI is set to `http://localhost`
+5. Verify that the email address is added to the test users list
+6. If you get "This app isn't verified" warning:
+   - Click "Advanced"
+   - Click "Go to [Your App Name] (unsafe)"
+   - Click "Allow" to grant the requested permissions
