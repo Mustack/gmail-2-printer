@@ -45,19 +45,48 @@ def get_credentials():
     # The file token.pickle stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first time.
     if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
+        try:
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        except Exception as e:
+            logging.error(f"Error loading token.pickle: {str(e)}")
+            logging.info("Will attempt to create new credentials.")
+    
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                logging.error(f"Error refreshing credentials: {str(e)}")
+                logging.info("Token has expired or been revoked. Please reauthorize the application.")
+                # Delete the invalid token file
+                try:
+                    os.remove('token.pickle')
+                except:
+                    pass
+                # Start fresh with new credentials
+                creds = None
+        
+        if not creds:
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+                # Save the credentials for the next run
+                with open('token.pickle', 'wb') as token:
+                    pickle.dump(creds, token)
+            except Exception as e:
+                logging.error(f"Error during OAuth2 flow: {str(e)}")
+                logging.error("""
+Please ensure:
+1. You have a valid credentials.json file
+2. You have enabled the Gmail API in your Google Cloud Console
+3. You have added your email as a test user in the OAuth consent screen
+4. You have the correct redirect URI set (http://localhost)
+""")
+                sys.exit(1)
+    
     return creds
 
 def Diff(li1, li2):
